@@ -34,7 +34,7 @@ type cacheItem struct {
 }
 
 // Get looks up a key's value from the cache. Returns value, true if the key was found.
-// If the key is not found, or if the key is found but has expired, return nil, false.
+// If the key is not found, or if the key is found but had expired, return nil, false.
 func (c *localCache) Get(key string) (interface{}, bool) {
 		c.m.Lock()
 		defer c.m.Unlock()
@@ -49,8 +49,8 @@ func (c *localCache) Get(key string) (interface{}, bool) {
 		return nil, false
 }
 
-// Set adds a value to the cache. If cache is full, it'll try to delete expired items first
-// and then delete the least recently used item.
+// Set adds a value to the cache. If cache is full, it'll try to evict expired item first.
+// If all items are not expired, evict the least recently used item.
 func (c *localCache) Set(key string, value interface{}) {
 		c.m.Lock()
 		defer c.m.Unlock()
@@ -85,6 +85,7 @@ func New() *localCache {
 		return &localCache{
 				ttl:     30 * time.Second,
 				cap:     128,
+				size:    0,
 				store:   make(map[string]*list.Element, 128),
 				lrulist: list.New(),
 				exppq:   make(priorityQueue, 0),
@@ -94,7 +95,11 @@ func New() *localCache {
 // evictExpired removes all expired items from the cache. Not thread safe.
 func (c *localCache) evictExpired() {
 		if c.exppq.Len() > 0 && c.exppq[0].expired() {
-				heap.Pop(&c.exppq)
+				c.size--
+				item := heap.Pop(&c.exppq).(*cacheItem)
+				ele := c.store[item.key]
+				c.lrulist.Remove(ele)
+				delete(c.store, item.key)
 		}
 }
 
@@ -102,6 +107,7 @@ func (c *localCache) evictExpired() {
 func (c *localCache) evictLRU() {
 		back := c.lrulist.Back()
 		if back != nil {
+				c.size--
 				c.lrulist.Remove(back)
 				delete(c.store, back.Value.(*cacheItem).key)
 		}

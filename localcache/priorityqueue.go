@@ -36,6 +36,7 @@ func (pq *priorityQueue) Pop() interface{} {
 		return item
 }
 
+// reset updates the priority queue when the item is updated to ensure invariant.
 func (pq *priorityQueue) reset(item *cacheItem, value interface{}, exp int64) {
 		item.exp = exp
 		item.val = value

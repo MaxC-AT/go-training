@@ -59,18 +59,18 @@ func (c *localCache) Set(key string, value interface{}) {
 	c.m.Lock()
 	defer c.m.Unlock()
 
-	if c.size == c.cap {
-		c.evictExpired()
-	}
-	if c.size == c.cap {
-		c.evictLRU()
-	}
-
 	exp := timeNow().Add(c.ttl).UnixNano()
 	if ele, ok := c.store[key]; ok {
 		c.lrulist.MoveToFront(ele)
 		c.exppq.reset(ele.Value.(*cacheItem), value, exp)
 		return
+	}
+
+	if c.size == c.cap {
+		c.evictExpired()
+	}
+	if c.size == c.cap {
+		c.evictLRU()
 	}
 
 	c.setItem(key, value, exp)

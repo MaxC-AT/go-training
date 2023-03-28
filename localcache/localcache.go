@@ -77,7 +77,7 @@ func (c *localCache) Set(key string, value interface{}) {
 }
 
 // New returns a new localCache with the default capacity & ttl.
-func New() *localCache {
+func New() Cache {
 	return &localCache{
 		ttl:     30 * time.Second,
 		cap:     128,

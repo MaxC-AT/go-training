@@ -2,7 +2,6 @@ package localcache
 
 import (
 	"container/heap"
-	"container/list"
 	"fmt"
 	"testing"
 	"time"
@@ -11,30 +10,7 @@ import (
 )
 
 const (
-	mockTTL = 1
 	mockCap = 4
-)
-
-var (
-	mockNew = func(items []*cacheItem) *localCache {
-		store := make(map[string]*list.Element)
-		lrulist := list.New()
-		exppq := make(priorityQueue, len(items))
-		for i, item := range items {
-			exppq[i] = item
-			ele := lrulist.PushFront(item)
-			store[item.key] = ele
-		}
-		heap.Init(&exppq)
-		return &localCache{
-			ttl:     mockTTL * time.Second,
-			cap:     mockCap,
-			size:    len(items),
-			store:   store,
-			lrulist: lrulist,
-			exppq:   exppq,
-		}
-	}
 )
 
 type localCacheSuite struct {
@@ -42,7 +18,9 @@ type localCacheSuite struct {
 	localcache *localCache
 }
 
-func (s *localCacheSuite) SetupSuite() {}
+func (s *localCacheSuite) SetupSuite() {
+	timeNow = func() time.Time { return time.Unix(1679932800, 0) }
+}
 
 func (s *localCacheSuite) SetupTest() {}
 
@@ -54,207 +32,202 @@ func TestLocalcacheSuite(t *testing.T) {
 	suite.Run(t, new(localCacheSuite))
 }
 
-func (s *localCacheSuite) TestGetNil() {
-	tests := []struct {
-		desc string
-		key  string
-		val  interface{}
-		exp  int64
-	}{
-		{desc: "nil if key not existed", key: "test1", val: "test1", exp: time.Now().Add((mockTTL) * time.Second).UnixNano()},
-		{desc: "nil if key had expired", key: "test", val: "test", exp: time.Now().UnixNano()},
-	}
-
-	for _, t := range tests {
-		items := createCacheItems(
-			[][]interface{}{{t.key, t.val, t.exp}},
-		)
-		s.localcache = mockNew(items)
-
-		val, ok := s.localcache.Get("test")
-		s.Require().Nil(val)
-		s.Require().False(ok)
-	}
-}
-
-func (s *localCacheSuite) TestGetValue() {
-	exp := time.Now().Add((mockTTL) * time.Second).UnixNano()
+func (s *localCacheSuite) TestGet() {
+	now := timeNow().UnixNano()
 	tests := []struct {
 		desc        string
 		itemConfigs [][]interface{}
+		checkFunc   func()
 	}{
 		{
 			desc:        "get value if key existed and not expired",
-			itemConfigs: [][]interface{}{{"test1", "test1", exp}},
+			itemConfigs: [][]interface{}{{"test1", "test1", now + 1}},
+			checkFunc: func() {
+				val, ok := s.localcache.Get("test1")
+				s.Require().Equal(val, "test1")
+				s.Require().True(ok)
+			},
 		},
 		{
 			desc:        "get value of different data types",
-			itemConfigs: [][]interface{}{{"test1", "test1", exp}, {"test2", 2, exp}, {"test3", 3.0, exp}, {"test4", true, exp}},
+			itemConfigs: [][]interface{}{{"test1", "test1", now + 1}, {"test2", 2, now + 1}, {"test3", 3.0, now + 1}, {"test4", true, now + 1}},
+			checkFunc: func() {
+				val, ok := s.localcache.Get("test1")
+				s.Require().Equal(val, "test1")
+				s.Require().True(ok)
+				val, ok = s.localcache.Get("test2")
+				s.Require().Equal(val, 2)
+				s.Require().True(ok)
+				val, ok = s.localcache.Get("test3")
+				s.Require().Equal(val, 3.0)
+				s.Require().True(ok)
+				val, ok = s.localcache.Get("test4")
+				s.Require().Equal(val, true)
+				s.Require().True(ok)
+			},
 		},
-	}
-
-	for _, t := range tests {
-		items := createCacheItems(t.itemConfigs)
-		s.localcache = mockNew(items)
-
-		for _, item := range items {
-			val, ok := s.localcache.Get(item.key)
-			s.Require().Equal(item.val, val)
-			s.Require().True(ok)
-		}
-	}
-}
-
-func (s *localCacheSuite) TestGetUpdateLRU() {
-	exp1 := time.Now().Add((mockTTL) * time.Second).UnixNano()
-	exp2 := time.Now().UnixNano()
-	tests := []struct {
-		desc        string
-		itemConfigs [][]interface{}
-		checkFunc   func([]*cacheItem)
-	}{
+		{
+			desc:        "get nil if key is not existed",
+			itemConfigs: [][]interface{}{{"test1", "test1", now + 1}},
+			checkFunc: func() {
+				val, ok := s.localcache.Get("test2")
+				s.Require().Nil(val)
+				s.Require().False(ok)
+			},
+		},
+		{
+			desc:        "get nil if key existed but expired",
+			itemConfigs: [][]interface{}{{"test1", "test1", timeNow().UnixNano() - 1}},
+			checkFunc: func() {
+				val, ok := s.localcache.Get("test1")
+				s.Require().Nil(val)
+				s.Require().False(ok)
+			},
+		},
 		{
 			desc:        "update lru if key existed and not expired",
-			itemConfigs: [][]interface{}{{"test1", "test1", exp1}, {"test2", "test2", exp1}, {"test3", "test3", exp1}, {"test4", "test4", exp1}},
-			checkFunc: func(items []*cacheItem) {
-				for _, item := range items {
-					s.localcache.Get(item.key)
-					s.Require().Equal(item.key, s.localcache.lrulist.Front().Value.(*cacheItem).key)
-				}
+			itemConfigs: [][]interface{}{{"test1", "test1", now + 1}, {"test2", "test2", now + 1}, {"test3", "test3", now + 1}, {"test4", "test4", now + 1}},
+			checkFunc: func() {
+				s.localcache.Get("test1")
+				s.Require().Equal("test1", s.localcache.lrulist.Front().Value.(*cacheItem).key)
+				s.localcache.Get("test2")
+				s.Require().Equal("test2", s.localcache.lrulist.Front().Value.(*cacheItem).key)
+				s.localcache.Get("test3")
+				s.Require().Equal("test3", s.localcache.lrulist.Front().Value.(*cacheItem).key)
+				s.localcache.Get("test4")
+				s.Require().Equal("test4", s.localcache.lrulist.Front().Value.(*cacheItem).key)
 			},
 		},
 		{
 			desc:        "not update lru if key had expired",
-			itemConfigs: [][]interface{}{{"test1", "test1", exp1}, {"test2", "test2", exp2}, {"test3", "test3", exp2}, {"test4", "test4", exp2}},
-			checkFunc: func(items []*cacheItem) {
-				for _, item := range items {
-					s.localcache.Get(item.key)
-					s.Require().Equal("test1", s.localcache.lrulist.Front().Value.(*cacheItem).key)
-				}
+			itemConfigs: [][]interface{}{{"test1", "test1", now + 1}, {"test2", "test2", now - 1}, {"test3", "test3", now - 1}, {"test4", "test4", now + 1}},
+			checkFunc: func() {
+				s.localcache.Get("test1")
+				s.Require().Equal("test1", s.localcache.lrulist.Front().Value.(*cacheItem).key)
+				s.localcache.Get("test2")
+				s.Require().Equal("test1", s.localcache.lrulist.Front().Value.(*cacheItem).key)
+				s.localcache.Get("test3")
+				s.Require().Equal("test1", s.localcache.lrulist.Front().Value.(*cacheItem).key)
+				s.localcache.Get("test4")
+				s.Require().Equal("test4", s.localcache.lrulist.Front().Value.(*cacheItem).key)
 			},
 		},
 	}
 
 	for _, t := range tests {
-		items := createCacheItems(t.itemConfigs)
-		s.localcache = mockNew(items)
-		t.checkFunc(items)
+		s.localcache = New()
+		s.localcache.cap = mockCap
+		s.createCacheItems(t.itemConfigs)
+		t.checkFunc()
 	}
 }
 
 func (s *localCacheSuite) TestSet() {
 	tests := []struct {
-		desc        string
-		itemConfigs [][]interface{}
-		checkFunc   func([][]interface{})
+		desc      string
+		checkFunc func()
 	}{
 		{
-			desc:        "set value succ",
-			itemConfigs: [][]interface{}{{"test1", "test1"}},
-			checkFunc: func(configs [][]interface{}) {
-				s.localcache = mockNew(nil)
-				for _, config := range configs {
-					key := config[0].(string)
-					val := config[1].(interface{})
+			desc: "set value succ",
+			checkFunc: func() {
+				s.localcache.Set("test1", "test1")
 
-					s.localcache.Set(key, val)
-
-					ele, ok := s.localcache.store[key]
-					s.Require().True(ok)
-					s.Require().Equal(val, ele.Value.(*cacheItem).val)
-				}
+				ele, ok := s.localcache.store["test1"]
+				s.Require().True(ok)
+				s.Require().Equal("test1", ele.Value.(*cacheItem).val)
 				s.Require().Equal(1, s.localcache.size)
 			},
 		},
 		{
-			desc:        "set value with different data type succ",
-			itemConfigs: [][]interface{}{{"test1", "test1"}, {"test2", 2}, {"test3", 3.0}, {"test4", []int{1, 2, 3}}},
-			checkFunc: func(configs [][]interface{}) {
-				s.localcache = mockNew(nil)
-				for _, config := range configs {
-					key := config[0].(string)
-					val := config[1].(interface{})
+			desc: "set value with different data type succ",
+			checkFunc: func() {
+				s.localcache.Set("test1", "test1")
+				ele, ok := s.localcache.store["test1"]
+				s.Require().True(ok)
+				s.Require().Equal("test1", ele.Value.(*cacheItem).val)
+				s.Require().Equal("test1", s.localcache.lrulist.Front().Value.(*cacheItem).key)
 
-					s.localcache.Set(key, val)
+				s.localcache.Set("test2", 2)
+				ele, ok = s.localcache.store["test2"]
+				s.Require().True(ok)
+				s.Require().Equal(2, ele.Value.(*cacheItem).val)
+				s.Require().Equal("test2", s.localcache.lrulist.Front().Value.(*cacheItem).key)
 
-					ele, ok := s.localcache.store[key]
-					s.Require().True(ok)
-					s.Require().Equal(val, ele.Value.(*cacheItem).val)
-					s.Require().Equal(key, s.localcache.lrulist.Front().Value.(*cacheItem).key)
-				}
-				s.Require().Equal(len(configs), s.localcache.size)
+				s.localcache.Set("test3", 3.0)
+				ele, ok = s.localcache.store["test3"]
+				s.Require().True(ok)
+				s.Require().Equal(3.0, ele.Value.(*cacheItem).val)
+				s.Require().Equal("test3", s.localcache.lrulist.Front().Value.(*cacheItem).key)
+
+				s.localcache.Set("test4", []int{1, 2, 3})
+				ele, ok = s.localcache.store["test4"]
+				s.Require().True(ok)
+				s.Require().Equal([]int{1, 2, 3}, ele.Value.(*cacheItem).val)
+				s.Require().Equal("test4", s.localcache.lrulist.Front().Value.(*cacheItem).key)
 			},
 		},
 		{
-			desc:        "set value with same key should overwrite old values and reset ttl",
-			itemConfigs: [][]interface{}{{"test1", "test1", time.Now().UnixNano()}},
-			checkFunc: func(configs [][]interface{}) {
-				items := createCacheItems(configs)
-				s.localcache = mockNew(items)
-				oldexp := items[0].exp
-
+			desc: "set value with same key should overwrite old values and reset ttl",
+			checkFunc: func() {
+				s.localcache.Set("test1", "test1")
+				timeNow = func() time.Time { return time.Unix(1679932800, 0).Add(1 * time.Second) }
 				s.localcache.Set("test1", "test2")
 
 				ele, ok := s.localcache.store["test1"]
-				newexp := ele.Value.(*cacheItem).exp
+				exp := ele.Value.(*cacheItem).exp
 				s.Require().True(ok)
 				s.Require().Equal("test2", ele.Value.(*cacheItem).val)
-				s.Require().True(newexp > oldexp+mockTTL*1000000)
+				s.Require().Equal(exp, timeNow().Add(s.localcache.ttl).UnixNano())
 				s.Require().Equal(1, s.localcache.size)
 			},
 		},
 		{
-			desc:        "set values more than capacity should evict",
-			itemConfigs: [][]interface{}{},
-			checkFunc: func(configs [][]interface{}) {
-				s.localcache = mockNew(nil)
-				for i := 0; i < mockCap+1; i++ {
+			desc: "set values more than capacity should evict",
+			checkFunc: func() {
+				for i := 0; i < s.localcache.cap+1; i++ {
 					s.localcache.Set(fmt.Sprintf("test%d", i), i)
 				}
-				s.Require().Equal(mockCap, s.localcache.size)
-				s.Require().Equal(mockCap, len(s.localcache.store))
-				s.Require().Equal(mockCap, s.localcache.lrulist.Len())
-			},
-		},
-	}
-
-	for _, t := range tests {
-		t.checkFunc(t.itemConfigs)
-	}
-}
-
-func (s *localCacheSuite) TestSetEvict() {
-	exp1 := time.Now().Add((mockTTL) * time.Second).UnixNano()
-	exp2 := time.Now().UnixNano()
-	tests := []struct {
-		desc        string
-		itemConfigs [][]interface{}
-		checkFunc   func([]*cacheItem)
-	}{
-		{
-			desc:        "evict furthest expired items when set new item if cache is full and some items are expired",
-			itemConfigs: [][]interface{}{{"test1", "test1", exp1}, {"test2", "test2", exp2}, {"test3", "test3", exp2 - 1}, {"test4", "test4", exp1}},
-			checkFunc: func(items []*cacheItem) {
-				s.localcache.Set("test5", "test5")
-
-				ele, ok := s.localcache.store["test3"]
-				top := heap.Pop(&s.localcache.exppq).(*cacheItem)
-				s.Require().False(ok)
-				s.Require().Nil(ele)
-				s.Require().Equal("test2", top.key)
+				s.Require().Equal(s.localcache.cap, s.localcache.size)
+				s.Require().Equal(s.localcache.cap, len(s.localcache.store))
+				s.Require().Equal(s.localcache.cap, s.localcache.lrulist.Len())
 			},
 		},
 		{
-			desc:        "evict lru item when set new item if cache is full and all items are not expired",
-			itemConfigs: [][]interface{}{},
-			checkFunc: func(items []*cacheItem) {
+			desc: "evict furthest expired items when set new item if cache is full and some items are expired",
+			checkFunc: func() {
 				s.localcache.Set("test1", "test1")
 				s.localcache.Set("test2", "test2")
+				timeNow = func() time.Time { return time.Unix(1679932800, 0).Add(-s.localcache.ttl - 1*time.Second) }
 				s.localcache.Set("test3", "test3")
+				timeNow = func() time.Time { return time.Unix(1679932800, 0).Add(-s.localcache.ttl - 2*time.Second) }
 				s.localcache.Set("test4", "test4")
+				timeNow = func() time.Time { return time.Unix(1679932800, 0) }
 				s.localcache.Set("test5", "test5")
 
-				ele, ok := s.localcache.store["test1"]
+				_, ok := s.localcache.store["test3"]
+				s.Require().True(ok)
+				_, ok = s.localcache.store["test5"]
+				s.Require().True(ok)
+				_, ok = s.localcache.store["test4"]
+				s.Require().False(ok)
+				top := heap.Pop(&s.localcache.exppq).(*cacheItem)
+				s.Require().Equal("test3", top.key)
+			},
+		},
+		{
+			desc: "evict lru item when set new item if cache is full and all items are not expired",
+			checkFunc: func() {
+				s.localcache.Set("test2", "test2")
+				s.localcache.Set("test3", "test3")
+				s.localcache.Set("test1", "test1")
+				s.localcache.Set("test4", "test4")
+				s.localcache.Set("test6", "test6")
+				s.localcache.Set("test5", "test5")
+
+				ele, ok := s.localcache.store["test2"]
+				s.Require().False(ok)
+				s.Require().Nil(ele)
+				ele, ok = s.localcache.store["test3"]
 				s.Require().False(ok)
 				s.Require().Nil(ele)
 			},
@@ -262,20 +235,19 @@ func (s *localCacheSuite) TestSetEvict() {
 	}
 
 	for _, t := range tests {
-		items := createCacheItems(t.itemConfigs)
-		s.localcache = mockNew(items)
-		t.checkFunc(items)
+		s.localcache = New()
+		s.localcache.cap = mockCap
+		t.checkFunc()
 	}
 }
 
-func createCacheItems(configs [][]interface{}) []*cacheItem {
+func (s *localCacheSuite) createCacheItems(configs [][]interface{}) []*cacheItem {
 	items := []*cacheItem{}
 	for _, c := range configs {
-		item := &cacheItem{
-			key: c[0].(string),
-			val: c[1],
-			exp: c[2].(int64),
-		}
+		key := c[0].(string)
+		val := c[1]
+		exp := c[2].(int64)
+		item := s.localcache.setItem(key, val, exp)
 		items = append(items, item)
 	}
 	return items

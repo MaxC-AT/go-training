@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+var (
+	timeNow = time.Now
+)
+
 // Cache is an interface for cache implementation.
 type Cache interface {
 	Get(key string) (interface{}, bool)
@@ -62,22 +66,14 @@ func (c *localCache) Set(key string, value interface{}) {
 		c.evictLRU()
 	}
 
-	exp := time.Now().Add(c.ttl).UnixNano()
+	exp := timeNow().Add(c.ttl).UnixNano()
 	if ele, ok := c.store[key]; ok {
 		c.lrulist.MoveToFront(ele)
 		c.exppq.reset(ele.Value.(*cacheItem), value, exp)
 		return
 	}
 
-	item := &cacheItem{
-		key: key,
-		val: value,
-		exp: exp,
-	}
-	ele := c.lrulist.PushFront(item)
-	heap.Push(&c.exppq, item)
-	c.store[key] = ele
-	c.size++
+	c.setItem(key, value, exp)
 }
 
 // New returns a new localCache with the default capacity & ttl.
@@ -115,5 +111,18 @@ func (c *localCache) evictLRU() {
 
 // expired returns true if the item has expired.
 func (item *cacheItem) expired() bool {
-	return time.Now().UnixNano() > item.exp
+	return timeNow().UnixNano() > item.exp
+}
+
+func (c *localCache) setItem(key string, value interface{}, exp int64) *cacheItem {
+	item := &cacheItem{
+		key: key,
+		val: value,
+		exp: exp,
+	}
+	ele := c.lrulist.PushFront(item)
+	heap.Push(&c.exppq, item)
+	c.store[key] = ele
+	c.size++
+	return item
 }

@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package member;
+
+import "google/protobuf/timestamp.proto";
+option go_package = "github.com/AmazingTalker/MaxC-AT/go-training/proto/member";
+
+message Member {
+  int64 id = 1 [json_name = "id"];
+  string name = 2 [json_name = "name"];
+  repeated string nick_names = 3 [json_name = "nick_names"];
+  google.protobuf.Timestamp birthday = 4 [json_name = "birthday"];
+  google.protobuf.Timestamp created_at = 5 [json_name = "created_at"];
+}
